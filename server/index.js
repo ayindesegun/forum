@@ -1,6 +1,9 @@
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const PORT = 5000;
+const { Novu } = require("@novu/node");
+const novu = new Novu(process.env.API_KEY);
 const app = express();
 
 //middleware
@@ -25,6 +28,7 @@ app.post("/api/register", async (req, res) => {
   //👇🏻 if true
   if (result.length === 0) {
     const newUser = { id, email, password, username };
+    await novu.subscribers.identify(id, { email: email });
     //👇🏻 adds the user to the database (array)
     users.push(newUser);
     //👇🏻 returns a success message
@@ -75,6 +79,17 @@ app.post("/api/create/thread", async (req, res) => {
     likes: [],
   });
 
+  //👇🏻 creates a new topic from the post
+  await novu.topics.create({
+    key: threadId,
+    name: thread,
+  });
+  //👇🏻 add the user as a subscriber
+  await novu.topics.addSubscribers(threadId, {
+    subscribers: [process.env.SUBSCRIBER_ID],
+    //replace with your subscriber ID to test run
+    // subscribers: ["<YOUR_SUBSCRIBER_ID>"],
+  });
   //👇🏻 Returns a response containing the posts
   res.json({
     message: "Thread created successfully!",
@@ -122,22 +137,34 @@ app.post("/api/thread/replies", (req, res) => {
 });
 
 app.post("/api/create/reply", async (req, res) => {
+  try {
     //👇🏻 accepts the post id, user id, and reply
     const { id, userId, reply } = req.body;
     //👇🏻 search for the exact post that was replied to
     const result = threadList.filter((thread) => thread.id === id);
+    if (result.length === 0) {
+      return res.status(404).send("Post not found");
+    }
     //👇🏻 search for the user via its id
     const user = users.filter((user) => user.id === userId);
+    if (user.length === 0) {
+      return res.status(404).send("User not found");
+    }
     //👇🏻 saves the user name and reply
     result[0].replies.unshift({
-        userId: user[0].id,
-        name: user[0].username,
-        text: reply,
+      userId: user[0].id,
+      name: user[0].username,
+      text: reply,
     });
-
-    res.json({
-        message: "Response added successfully!",
+    //👇🏻 Triggers the function when there is a new reply
+    await novu.trigger("on-boarding-notification", {
+      to: [{ type: "Topic", topicKey: id }],
     });
+    return res.status(200).send("Reply created successfully");
+  } catch (error) {
+    console.error(error);
+    return res.status(500).send("Internal server error");
+  }
 });
 
 app.listen(PORT, () => console.log(`App is alive and Jiggy on PORT ${PORT}`));
